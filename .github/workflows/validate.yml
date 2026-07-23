@@ -1,0 +1,58 @@
+name: Validate packages
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Structural validation
+        run: |
+          set -euo pipefail
+          for MANIFEST in packages/*/manifest.json; do
+            DIR=$(dirname "$MANIFEST")
+            python3 - "$MANIFEST" << 'PY'
+          import json, re, sys, os
+          path = sys.argv[1]
+          d = os.path.dirname(path)
+          m = json.load(open(path))
+          name, version = m["name"], m["version"]
+          assert re.fullmatch(r"[a-z0-9][a-z0-9-]*", name), f"bad name {name}"
+          assert re.fullmatch(r"v\d{4}\.\d{2}\.[1-9]\d*", version), f"bad version {version}"
+          missing = []
+          for p in m.get("prompts", []):
+              if not os.path.exists(os.path.join(d, p["file"])): missing.append(p["file"])
+          for f in (m.get("preludes") or {}).values():
+              if not os.path.exists(os.path.join(d, f)): missing.append(f)
+          for f in (m.get("schemas") or {}).values():
+              if not os.path.exists(os.path.join(d, f)): missing.append(f)
+          for key, val in (m.get("data") or {}).items():
+              if val.endswith("/"):
+                  idx = os.path.join(d, val, "index.json")
+                  assert os.path.exists(idx), f"missing {val}index.json"
+                  for item in json.load(open(idx))["items"]:
+                      if "file" in item and not os.path.exists(os.path.join(d, val, item["file"])):
+                          missing.append(val + item["file"])
+              elif not os.path.exists(os.path.join(d, val)):
+                  missing.append(val)
+          assert not missing, f"files referenced but absent: {missing}"
+          print(f"{name}@{version}: structure OK")
+          PY
+          done
+      - name: Version not already published
+        run: |
+          set -euo pipefail
+          for MANIFEST in packages/*/manifest.json; do
+            NAME=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['name'])" "$MANIFEST")
+            VERSION=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['version'])" "$MANIFEST")
+            CODE=$(curl -s -o /dev/null -w "%{http_code}" "https://consultologistpublic.blob.core.windows.net/workflow-packages/$NAME/$VERSION/manifest.json")
+            if [ "$CODE" = "200" ]; then
+              echo "::warning::$NAME@$VERSION already published (immutable) — bump the version before tagging"
+            else
+              echo "$NAME@$VERSION not yet published (HTTP $CODE) — publishable"
+            fi
+          done
