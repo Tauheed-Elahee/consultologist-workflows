@@ -1,6 +1,6 @@
 {
 	"name": "general",
-	"version": "v2026.07.7",
+	"version": "v2026.07.8",
 	"specVersion": 6,
 	"derivedFrom": null,
 	"templating": { "engine": "scriban", "engineVersion": "7.2.5" },
